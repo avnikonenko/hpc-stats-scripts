@@ -9,7 +9,7 @@ def read_readme() -> str:
 
 setup(
     name="hpc-stats-scripts",
-    version="1.2",
+    version="1.3.1",
     description="Utilities for HPC clusters including PBS/Slurm job statistics and a psutil-based resource monitor.",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
