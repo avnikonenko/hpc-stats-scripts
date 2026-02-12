@@ -1,7 +1,7 @@
 # hpc-stats-scripts
 
 Utilities for working with high-performance computing (HPC) environments. The scripts
-help inspect PBS/Slurm job efficiency and monitor CPU and memory usage on a
+help inspect PBS/Slurm job efficiency and monitor CPU/GPU and memory usage on a
 running system or process tree.
 
 Made with Codex :)
