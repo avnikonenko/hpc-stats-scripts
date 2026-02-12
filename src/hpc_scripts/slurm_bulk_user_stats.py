@@ -372,6 +372,7 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
     rows = []
     rows_by_jobid: Dict[str, Dict[str, Any]] = {}
     step_cput_by_jobid: Dict[str, int] = {}
+    step_mem_by_jobid: Dict[str, int] = {}
     for line in out.splitlines():
         line = line.strip()
         if not line:
@@ -387,6 +388,11 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
                 step_cput_s = parse_cpu_time_from_sacct_fields(data)
                 if step_cput_s is not None:
                     step_cput_by_jobid[base_jobid] = step_cput_by_jobid.get(base_jobid, 0) + step_cput_s
+                step_mem_b = parse_size_to_bytes(data.get("MaxRSS", ""))
+                if step_mem_b is not None and step_mem_b > 0:
+                    prev_mem_b = step_mem_by_jobid.get(base_jobid, 0)
+                    if step_mem_b > prev_mem_b:
+                        step_mem_by_jobid[base_jobid] = step_mem_b
         r = summarize_from_sacct_line(line, fields_used)
         if r:
             rows.append(r)
@@ -404,6 +410,13 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
             r["cput_s"] = step_cput
             r["avg_used_cpus"] = avg_used_cpus
             r["cpu_eff"] = cpu_eff
+
+        parent_mem = r.get("used_mem_b")
+        step_mem = step_mem_by_jobid.get(jobid_key)
+        if (parent_mem is None or parent_mem <= 0) and step_mem is not None and step_mem > 0:
+            r["used_mem_b"] = step_mem
+            req_mem_b = r.get("req_mem_b")
+            r["mem_eff"] = (step_mem / req_mem_b) if (req_mem_b and req_mem_b > 0) else None
 
         state = (r.get("state") or "").upper()
         cpu_missing = r.get("cput_s") is None or r.get("cput_s", 0) <= 0
