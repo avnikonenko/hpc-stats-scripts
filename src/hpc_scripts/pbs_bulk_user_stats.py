@@ -186,6 +186,17 @@ def summarize_job(jobid: str) -> Dict[str, Any]:
     blk = run(["qstat", "-fx", jobid])
     return summarize_job_from_block(blk)
 
+
+def is_pbs_finished_state(state: str) -> bool:
+    return state.strip().upper() in {"X", "F"}
+
+
+def jobid_key(jobid: Optional[str]) -> str:
+    if not jobid:
+        return ""
+    return jobid.split(".", 1)[0]
+
+
 # ---------- Fast bulk path ----------
 def split_qstat_f_blocks(blob: str) -> List[str]:
     """Split a single 'qstat -f ...' response into per-job blocks."""
@@ -253,6 +264,32 @@ def summarize_all_jobs_compat(user: str, include_finished: bool) -> List[Dict[st
         except subprocess.CalledProcessError:
             continue
     return rows
+
+
+def summarize_jobs_with_finished_limit_fetch(user: str, mode: str, finished_limit: int) -> List[Dict[str, Any]]:
+    if mode == "bulk":
+        active_rows = summarize_all_jobs_bulk(user, include_finished=False)
+    else:
+        active_rows = summarize_all_jobs_compat(user, include_finished=False)
+
+    if finished_limit <= 0:
+        return active_rows
+
+    active_keys = {jobid_key(r.get("jobid")) for r in active_rows}
+    finished_rows: List[Dict[str, Any]] = []
+    for jid in list_user_jobids(user, include_finished=True):
+        if jobid_key(jid) in active_keys:
+            continue
+        try:
+            row = summarize_job(jid)
+        except subprocess.CalledProcessError:
+            continue
+        if not is_pbs_finished_state(row.get("state") or ""):
+            continue
+        finished_rows.append(row)
+        if len(finished_rows) >= finished_limit:
+            break
+    return active_rows + finished_rows
 
 # ---------- Output ----------
 def render_table(rows: List[Dict[str,Any]], name_max: int) -> None:
@@ -378,8 +415,7 @@ def limit_finished_rows(rows: List[Dict[str, Any]], finished_limit: Optional[int
     kept_finished = 0
     filtered: List[Dict[str, Any]] = []
     for row in rows:
-        state = (row.get("state") or "").strip().upper()
-        is_finished = state in {"X", "F"}
+        is_finished = is_pbs_finished_state(row.get("state") or "")
         if is_finished:
             if kept_finished >= finished_limit:
                 continue
@@ -400,6 +436,12 @@ def main():
         type=non_negative_int,
         metavar="N",
         help="With --include-finished, show at most N finished jobs (state X/F). Active jobs are always shown.",
+    )
+    ap.add_argument(
+        "--finished-limit-strategy",
+        choices=["post", "fetch"],
+        default="post",
+        help="How to apply --finished-limit: post=fetch all then trim (default), fetch=fetch active + up to N finished jobs.",
     )
     ap.add_argument("--mode", choices=["bulk","compat"], default="bulk",
     help="Bulk mode: one qstat -f for all jobs; auto-fallback to compat if it fails.\n Compat mode: one qstat -fx per job (slower but widely compatible)"
@@ -430,18 +472,29 @@ def main():
             print("Provide --job JOBID or run inside PBS with $PBS_JOBID set, or use --user USER.", file=sys.stderr)
             sys.exit(2)
         used_fast = False
-        if args.mode == "bulk":
+        if args.include_finished and args.finished_limit is not None and args.finished_limit_strategy == "fetch":
             try:
-                rows = summarize_all_jobs_bulk(user, include_finished=args.include_finished)
-                used_fast = True
+                rows = summarize_jobs_with_finished_limit_fetch(
+                    user=user, mode=args.mode, finished_limit=args.finished_limit
+                )
             except subprocess.CalledProcessError:
-                rows = []
-            except Exception:
-                rows = []
-        if not rows and args.mode == "compat":
-            rows = summarize_all_jobs_compat(user, include_finished=args.include_finished)
-
-    rows = limit_finished_rows(rows, args.finished_limit)
+                if args.mode == "bulk":
+                    rows = summarize_all_jobs_bulk(user, include_finished=True)
+                else:
+                    rows = summarize_all_jobs_compat(user, include_finished=True)
+            rows = limit_finished_rows(rows, args.finished_limit)
+        else:
+            if args.mode == "bulk":
+                try:
+                    rows = summarize_all_jobs_bulk(user, include_finished=args.include_finished)
+                    used_fast = True
+                except subprocess.CalledProcessError:
+                    rows = []
+                except Exception:
+                    rows = []
+            if not rows and args.mode == "compat":
+                rows = summarize_all_jobs_compat(user, include_finished=args.include_finished)
+            rows = limit_finished_rows(rows, args.finished_limit)
 
     # output
     render_table(rows, name_max=args.name_max)

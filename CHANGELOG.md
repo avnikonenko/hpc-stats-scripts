@@ -15,4 +15,6 @@
 
 ## the latest version from github**
 - Added `--finished-limit N` to `pbs-bulk-user-stats` and `slurm-bulk-user-stats`. Show only first N finished jobs.
+- Added `--finished-limit-strategy {post,fetch}` to `pbs-bulk-user-stats` and `slurm-bulk-user-stats`.
+  Default `post` keeps previous behavior (fetch all then trim), while `fetch` is a best-effort faster mode (fetch active jobs plus up to N finished jobs).
 - Improved `slurm-bulk-user-stats` CPU efficiency reporting by using step-row CPU time (for example `.batch`) when parent job `TotalCPU` is missing or zero.

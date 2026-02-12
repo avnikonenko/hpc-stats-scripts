@@ -70,6 +70,9 @@ pbs-bulk-user-stats --user myuser --include-finished
 
 # Include finished jobs but only keep 20 finished entries
 pbs-bulk-user-stats --user myuser --include-finished --finished-limit 20
+
+# Faster best-effort mode: fetch active jobs + only N finished job details
+pbs-bulk-user-stats --user myuser --include-finished --finished-limit 20 --finished-limit-strategy fetch
 ```
 
 When invoked with no `--user` or `--job` options:
@@ -223,6 +226,9 @@ slurm-bulk-user-stats --user myuser --include-finished
 
 # Include finished jobs but only keep 20 finished entries
 slurm-bulk-user-stats --user myuser --include-finished --finished-limit 20
+
+# Faster best-effort mode: fetch active jobs + only N finished job details
+slurm-bulk-user-stats --user myuser --include-finished --finished-limit 20 --finished-limit-strategy fetch
 ```
 
 When invoked with no `--user` or `--job` options:

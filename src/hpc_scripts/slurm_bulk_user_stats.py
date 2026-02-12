@@ -178,6 +178,12 @@ def parse_state(raw_state: str) -> str:
     return raw_state.split()[0].upper()
 
 
+def jobid_key(jobid: Optional[str]) -> str:
+    if not jobid:
+        return ""
+    return jobid.split(".", 1)[0]
+
+
 def summarize_from_sacct_line(line: str, fields: List[str]) -> Optional[Dict[str, Any]]:
     parts = line.split("|")
     if len(parts) < len(fields):
@@ -457,6 +463,106 @@ ACTIVE_STATES = {
 }
 
 
+def is_active_state(state: str) -> bool:
+    return state.strip().upper() in ACTIVE_STATES
+
+
+def collect_finished_jobids_with_sacct(user: str, finished_limit: int, active_keys: set[str]) -> List[str]:
+    if finished_limit <= 0:
+        return []
+    cmd = [
+        "sacct",
+        "-n",
+        "-P",
+        "--format=JobIDRaw,State",
+    ]
+    if user:
+        cmd += ["-u", user]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        errors="ignore",
+    )
+    if proc.stdout is None:
+        return []
+
+    selected: List[str] = []
+    seen: set[str] = set()
+    terminated_early = False
+    try:
+        for raw in proc.stdout:
+            line = raw.strip()
+            if not line:
+                continue
+            parts = line.split("|", 1)
+            if len(parts) < 2:
+                continue
+            jobid_raw = parts[0].strip()
+            state = parse_state(parts[1].strip())
+            if not jobid_raw or "." in jobid_raw:
+                continue
+            key = jobid_key(jobid_raw)
+            if key in seen or key in active_keys:
+                continue
+            if is_active_state(state):
+                continue
+            seen.add(key)
+            selected.append(jobid_raw)
+            if len(selected) >= finished_limit:
+                terminated_early = True
+                proc.terminate()
+                break
+    finally:
+        proc.stdout.close()
+
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+    if not terminated_early and proc.returncode not in (0, None):
+        raise subprocess.CalledProcessError(proc.returncode or 1, cmd)
+    return selected
+
+
+def list_jobs_with_finished_limit_fetch(user: str, finished_limit: int) -> List[Dict[str, Any]]:
+    active_rows = list_jobs_with_sacct(user=user, include_finished=False, jobid=None)
+    if finished_limit <= 0:
+        return active_rows
+
+    active_keys = {jobid_key(r.get("jobid")) for r in active_rows}
+    finished_jobids = collect_finished_jobids_with_sacct(
+        user=user,
+        finished_limit=finished_limit,
+        active_keys=active_keys,
+    )
+    if not finished_jobids:
+        return active_rows
+
+    finished_rows = list_jobs_with_sacct(
+        user="",
+        include_finished=True,
+        jobid=",".join(finished_jobids),
+    )
+    trimmed_finished = limit_finished_rows(
+        [r for r in finished_rows if not is_active_state(r.get("state") or "")],
+        finished_limit,
+    )
+
+    out = list(active_rows)
+    seen_keys = set(active_keys)
+    for row in trimmed_finished:
+        key = jobid_key(row.get("jobid"))
+        if key and key not in seen_keys:
+            out.append(row)
+            seen_keys.add(key)
+    return out
+
+
 def limit_finished_rows(rows: List[Dict[str, Any]], finished_limit: Optional[int]) -> List[Dict[str, Any]]:
     if finished_limit is None:
         return rows
@@ -464,7 +570,7 @@ def limit_finished_rows(rows: List[Dict[str, Any]], finished_limit: Optional[int
     filtered: List[Dict[str, Any]] = []
     for row in rows:
         state = (row.get("state") or "").strip().upper()
-        is_finished = bool(state) and state not in ACTIVE_STATES
+        is_finished = bool(state) and not is_active_state(state)
         if is_finished:
             if kept_finished >= finished_limit:
                 continue
@@ -496,6 +602,12 @@ def main() -> None:
         type=non_negative_int,
         metavar="N",
         help="With --include-finished, show at most N finished jobs. Active jobs are always shown.",
+    )
+    ap.add_argument(
+        "--finished-limit-strategy",
+        choices=["post", "fetch"],
+        default="post",
+        help="How to apply --finished-limit: post=fetch all then trim (default), fetch=fetch active + up to N finished jobs.",
     )
     ap.add_argument(
         "--csv",
@@ -534,9 +646,15 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(2)
-        rows = list_jobs_with_sacct(user=user, include_finished=args.include_finished, jobid=None)
-
-    rows = limit_finished_rows(rows, args.finished_limit)
+        if args.include_finished and args.finished_limit is not None and args.finished_limit_strategy == "fetch":
+            try:
+                rows = list_jobs_with_finished_limit_fetch(user=user, finished_limit=args.finished_limit)
+            except subprocess.CalledProcessError:
+                rows = list_jobs_with_sacct(user=user, include_finished=True, jobid=None)
+            rows = limit_finished_rows(rows, args.finished_limit)
+        else:
+            rows = list_jobs_with_sacct(user=user, include_finished=args.include_finished, jobid=None)
+            rows = limit_finished_rows(rows, args.finished_limit)
 
     render_table(rows, name_max=args.name_max)
     agg = aggregate(rows)
