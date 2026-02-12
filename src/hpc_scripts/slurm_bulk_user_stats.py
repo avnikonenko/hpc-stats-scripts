@@ -149,6 +149,38 @@ def parse_gpus_from_gres(gres: str) -> Optional[int]:
     return total if seen else None
 
 
+def parse_cpu_seconds_from_tres_usage(tres_usage: str) -> Optional[int]:
+    """Extract CPU time from TRES usage strings like 'cpu=01:02:03,mem=...'."""
+    if not tres_usage:
+        return None
+    for part in tres_usage.split(","):
+        part = part.strip()
+        if not part or not part.startswith("cpu="):
+            continue
+        val = part.split("=", 1)[1].strip()
+        parsed = parse_slurm_time_to_seconds(val)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def parse_cpu_time_from_sacct_fields(data: Dict[str, str]) -> Optional[int]:
+    """Best-effort CPU time extraction across Slurm/accounting variants."""
+    total_cpu = parse_slurm_time_to_seconds(data.get("TotalCPU", ""))
+    if total_cpu is not None and total_cpu > 0:
+        return total_cpu
+
+    user_cpu = parse_slurm_time_to_seconds(data.get("UserCPU", ""))
+    system_cpu = parse_slurm_time_to_seconds(data.get("SystemCPU", ""))
+    if user_cpu is not None or system_cpu is not None:
+        return (user_cpu or 0) + (system_cpu or 0)
+
+    tres_cpu = parse_cpu_seconds_from_tres_usage(data.get("TRESUsageInTot", ""))
+    if tres_cpu is not None:
+        return tres_cpu
+    return total_cpu
+
+
 # ---------- sacct parsing ----------
 SACCT_FIELDS_BASE = [
     "JobIDRaw",
@@ -163,10 +195,12 @@ SACCT_FIELDS_BASE = [
     "NNodes",
     "NodeList",
 ]  # minimal set that is widely supported
+# Optional usage fields (availability depends on cluster/configuration)
+SACCT_FIELDS_USAGE = ["UserCPU", "SystemCPU", "TRESUsageInTot"]
 # Extended field sets (tried in order; sacct may reject unknown fields on some clusters)
-SACCT_FIELDS_TRES = SACCT_FIELDS_BASE + ["AllocTRES", "ReqTRES"]
-SACCT_FIELDS_GRES = SACCT_FIELDS_BASE + ["AllocGRES", "ReqGRES", "Gres"]
-SACCT_FIELDS_FULL = SACCT_FIELDS_BASE + ["AllocTRES", "ReqTRES", "AllocGRES", "ReqGRES", "Gres"]
+SACCT_FIELDS_TRES = SACCT_FIELDS_BASE + ["AllocTRES", "ReqTRES"] + SACCT_FIELDS_USAGE
+SACCT_FIELDS_GRES = SACCT_FIELDS_BASE + ["AllocGRES", "ReqGRES", "Gres"] + SACCT_FIELDS_USAGE
+SACCT_FIELDS_FULL = SACCT_FIELDS_BASE + ["AllocTRES", "ReqTRES", "AllocGRES", "ReqGRES", "Gres"] + SACCT_FIELDS_USAGE
 # Default/legacy alias for backward compatibility
 SACCT_FIELDS = SACCT_FIELDS_FULL
 
@@ -207,7 +241,7 @@ def summarize_from_sacct_line(line: str, fields: List[str]) -> Optional[Dict[str
         or parse_gpus_from_gres(data.get("Gres", ""))
     )
     wall_s = int(data["ElapsedRaw"]) if data["ElapsedRaw"].isdigit() else None
-    cput_s = parse_slurm_time_to_seconds(data["TotalCPU"])
+    cput_s = parse_cpu_time_from_sacct_fields(data)
     used_mem_b = parse_size_to_bytes(data["MaxRSS"])
     req_mem_b = parse_reqmem_to_bytes(data["ReqMem"], ncpus=ncpus, nnodes=nnodes)
     avg_used_cpus = (cput_s / wall_s) if (cput_s is not None and wall_s and wall_s > 0) else None
@@ -293,7 +327,7 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
             # where parent job TotalCPU is missing/zero while steps carry accounting data.
             if jobid_raw and "." in jobid_raw:
                 base_jobid = jobid_raw.split(".", 1)[0]
-                step_cput_s = parse_slurm_time_to_seconds(data.get("TotalCPU", ""))
+                step_cput_s = parse_cpu_time_from_sacct_fields(data)
                 if step_cput_s is not None:
                     step_cput_by_jobid[base_jobid] = step_cput_by_jobid.get(base_jobid, 0) + step_cput_s
         r = summarize_from_sacct_line(line, fields_used)
