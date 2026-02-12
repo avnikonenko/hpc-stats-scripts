@@ -182,9 +182,20 @@ def parse_cpu_time_from_sacct_fields(data: Dict[str, str]) -> Optional[int]:
 
 
 def parse_sstat_live_usage(out: str) -> Optional[Dict[str, Optional[int]]]:
-    """Parse sstat pipe output and prefer .batch row when available."""
-    best_row = None
-    fallback_row = None
+    """Parse sstat pipe output and pick the most informative step row."""
+    best_score: Optional[tuple] = None
+    best_row: Optional[Dict[str, Optional[int]]] = None
+
+    def step_priority(step_id: str) -> int:
+        sid = step_id.strip().lower().rstrip("+")
+        if sid.endswith(".batch"):
+            return 3
+        if sid.endswith(".extern") or sid.endswith(".ext"):
+            return 0
+        if sid.endswith(".intern") or sid.endswith(".int"):
+            return 2
+        return 1
+
     for raw in out.splitlines():
         line = raw.strip()
         if not line:
@@ -197,13 +208,14 @@ def parse_sstat_live_usage(out: str) -> Optional[Dict[str, Optional[int]]]:
         ave_rss_b = parse_size_to_bytes(parts[2].strip())
         max_rss_b = parse_size_to_bytes(parts[3].strip())
         used_mem_b = max_rss_b or ave_rss_b
-        row = {"cput_s": cput_s, "used_mem_b": used_mem_b}
-        if step_id.endswith(".batch"):
-            best_row = row
-            break
-        if fallback_row is None:
-            fallback_row = row
-    return best_row or fallback_row
+        cput_v = cput_s or 0
+        mem_v = used_mem_b or 0
+        has_usage = 1 if (cput_v > 0 or mem_v > 0) else 0
+        score = (has_usage, step_priority(step_id), cput_v, mem_v)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_row = {"cput_s": cput_s, "used_mem_b": used_mem_b}
+    return best_row
 
 
 def get_live_usage_from_sstat(jobid: str) -> Optional[Dict[str, Optional[int]]]:
@@ -211,6 +223,7 @@ def get_live_usage_from_sstat(jobid: str) -> Optional[Dict[str, Optional[int]]]:
     if not jobid or not shutil.which("sstat"):
         return None
     cmds = [
+        ["sstat", "-n", "-P", "-j", jobid, "--allsteps", "--format=JobID,AveCPU,AveRSS,MaxRSS"],
         ["sstat", "-n", "-P", "-j", f"{jobid}.batch", "--format=JobID,AveCPU,AveRSS,MaxRSS"],
         ["sstat", "-n", "-P", "-j", jobid, "--format=JobID,AveCPU,AveRSS,MaxRSS"],
     ]
@@ -400,24 +413,31 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
         if jobid_key not in sstat_cache:
             sstat_cache[jobid_key] = get_live_usage_from_sstat(jobid_key)
         live = sstat_cache[jobid_key]
-        if not live:
-            continue
+        if live:
+            live_cput = live.get("cput_s")
+            if cpu_missing and live_cput is not None and live_cput > 0:
+                wall_s = r.get("wall_s")
+                ncpus = r.get("ncpus")
+                avg_used_cpus = (live_cput / wall_s) if (wall_s and wall_s > 0) else None
+                cpu_eff = (avg_used_cpus / ncpus) if (avg_used_cpus is not None and ncpus) else None
+                r["cput_s"] = live_cput
+                r["avg_used_cpus"] = avg_used_cpus
+                r["cpu_eff"] = cpu_eff
 
-        live_cput = live.get("cput_s")
-        if cpu_missing and live_cput is not None and live_cput > 0:
-            wall_s = r.get("wall_s")
-            ncpus = r.get("ncpus")
-            avg_used_cpus = (live_cput / wall_s) if (wall_s and wall_s > 0) else None
-            cpu_eff = (avg_used_cpus / ncpus) if (avg_used_cpus is not None and ncpus) else None
-            r["cput_s"] = live_cput
-            r["avg_used_cpus"] = avg_used_cpus
-            r["cpu_eff"] = cpu_eff
+            live_mem = live.get("used_mem_b")
+            if mem_missing and live_mem is not None and live_mem > 0:
+                r["used_mem_b"] = live_mem
+                req_mem_b = r.get("req_mem_b")
+                r["mem_eff"] = (live_mem / req_mem_b) if (req_mem_b and req_mem_b > 0) else None
 
-        live_mem = live.get("used_mem_b")
-        if mem_missing and live_mem is not None and live_mem > 0:
-            r["used_mem_b"] = live_mem
-            req_mem_b = r.get("req_mem_b")
-            r["mem_eff"] = (live_mem / req_mem_b) if (req_mem_b and req_mem_b > 0) else None
+        # If live reads failed and accounting still has no positive CPU signal, show n/a instead of 0.
+        if (r.get("cput_s") is not None and r.get("cput_s", 0) <= 0) and (step_cput_by_jobid.get(jobid_key, 0) <= 0):
+            r["cput_s"] = None
+            r["avg_used_cpus"] = None
+            r["cpu_eff"] = None
+        if r.get("used_mem_b") is not None and r.get("used_mem_b", 0) <= 0:
+            r["used_mem_b"] = None
+            r["mem_eff"] = None
     return rows
 
 
