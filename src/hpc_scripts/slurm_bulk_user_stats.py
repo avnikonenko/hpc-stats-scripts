@@ -181,6 +181,50 @@ def parse_cpu_time_from_sacct_fields(data: Dict[str, str]) -> Optional[int]:
     return total_cpu
 
 
+def parse_sstat_live_usage(out: str) -> Optional[Dict[str, Optional[int]]]:
+    """Parse sstat pipe output and prefer .batch row when available."""
+    best_row = None
+    fallback_row = None
+    for raw in out.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split("|")
+        if len(parts) < 4:
+            continue
+        step_id = parts[0].strip()
+        cput_s = parse_slurm_time_to_seconds(parts[1].strip())
+        ave_rss_b = parse_size_to_bytes(parts[2].strip())
+        max_rss_b = parse_size_to_bytes(parts[3].strip())
+        used_mem_b = max_rss_b or ave_rss_b
+        row = {"cput_s": cput_s, "used_mem_b": used_mem_b}
+        if step_id.endswith(".batch"):
+            best_row = row
+            break
+        if fallback_row is None:
+            fallback_row = row
+    return best_row or fallback_row
+
+
+def get_live_usage_from_sstat(jobid: str) -> Optional[Dict[str, Optional[int]]]:
+    """Best-effort live usage for running jobs when sacct fields are empty."""
+    if not jobid or not shutil.which("sstat"):
+        return None
+    cmds = [
+        ["sstat", "-n", "-P", "-j", f"{jobid}.batch", "--format=JobID,AveCPU,AveRSS,MaxRSS"],
+        ["sstat", "-n", "-P", "-j", jobid, "--format=JobID,AveCPU,AveRSS,MaxRSS"],
+    ]
+    for cmd in cmds:
+        try:
+            out = run(cmd)
+        except subprocess.CalledProcessError:
+            continue
+        parsed = parse_sstat_live_usage(out)
+        if parsed:
+            return parsed
+    return None
+
+
 # ---------- sacct parsing ----------
 SACCT_FIELDS_BASE = [
     "JobIDRaw",
@@ -335,6 +379,7 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
             rows.append(r)
             rows_by_jobid[r["jobid"]] = r
 
+    sstat_cache: Dict[str, Optional[Dict[str, Optional[int]]]] = {}
     for jobid_key, r in rows_by_jobid.items():
         parent_cput = r.get("cput_s")
         step_cput = step_cput_by_jobid.get(jobid_key)
@@ -346,6 +391,33 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
             r["cput_s"] = step_cput
             r["avg_used_cpus"] = avg_used_cpus
             r["cpu_eff"] = cpu_eff
+
+        state = (r.get("state") or "").upper()
+        cpu_missing = r.get("cput_s") is None or r.get("cput_s", 0) <= 0
+        mem_missing = r.get("used_mem_b") is None or r.get("used_mem_b", 0) <= 0
+        if state not in {"R", "RUNNING"} or (not cpu_missing and not mem_missing):
+            continue
+        if jobid_key not in sstat_cache:
+            sstat_cache[jobid_key] = get_live_usage_from_sstat(jobid_key)
+        live = sstat_cache[jobid_key]
+        if not live:
+            continue
+
+        live_cput = live.get("cput_s")
+        if cpu_missing and live_cput is not None and live_cput > 0:
+            wall_s = r.get("wall_s")
+            ncpus = r.get("ncpus")
+            avg_used_cpus = (live_cput / wall_s) if (wall_s and wall_s > 0) else None
+            cpu_eff = (avg_used_cpus / ncpus) if (avg_used_cpus is not None and ncpus) else None
+            r["cput_s"] = live_cput
+            r["avg_used_cpus"] = avg_used_cpus
+            r["cpu_eff"] = cpu_eff
+
+        live_mem = live.get("used_mem_b")
+        if mem_missing and live_mem is not None and live_mem > 0:
+            r["used_mem_b"] = live_mem
+            req_mem_b = r.get("req_mem_b")
+            r["mem_eff"] = (live_mem / req_mem_b) if (req_mem_b and req_mem_b > 0) else None
     return rows
 
 
