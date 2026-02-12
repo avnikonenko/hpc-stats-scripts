@@ -13,7 +13,7 @@
 - Added optional GPU monitoring to psutil-monitor via `--gpu` (NVML/pynvml), including terminal, plot and CSV outputs.
 - Added pip extras `gpu` and `all` (plot + GPU) for simpler installs.
 
-## the latest version from github**
+## 1.3**
 - Added `--finished-limit N` to `pbs-bulk-user-stats` and `slurm-bulk-user-stats`. Show only first N finished jobs.
 - Added `--finished-limit-strategy {post,fetch}` to `pbs-bulk-user-stats` and `slurm-bulk-user-stats`.
   Default `post` keeps previous behavior (fetch all then trim), while `fetch` is a best-effort faster mode (fetch active jobs plus up to N finished jobs).

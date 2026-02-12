@@ -71,7 +71,7 @@ pbs-bulk-user-stats --user myuser --include-finished
 # Include finished jobs but only keep 20 finished entries
 pbs-bulk-user-stats --user myuser --include-finished --finished-limit 20
 
-# Faster best-effort mode: fetch active jobs + only N finished job details
+# Faster best-effort mode: fetch active jobs + only N finished job details (use if default option takes too long)
 pbs-bulk-user-stats --user myuser --include-finished --finished-limit 20 --finished-limit-strategy fetch
 ```
 
