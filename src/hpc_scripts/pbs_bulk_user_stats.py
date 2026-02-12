@@ -73,6 +73,12 @@ def pct_str(x: Optional[float]) -> str:
 def run(cmd: List[str]) -> str:
     return subprocess.check_output(cmd, text=True, errors="ignore")
 
+def non_negative_int(val: str) -> int:
+    n = int(val)
+    if n < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return n
+
 # ---------- select=... parsing ----------
 def parse_total_ncpus_from_select(select_str: str) -> Optional[int]:
     total = 0
@@ -365,6 +371,22 @@ def aggregate(rows: List[Dict[str,Any]]) -> Dict[str, Any]:
         "state_other_breakdown": other_states,
     }
 
+
+def limit_finished_rows(rows: List[Dict[str, Any]], finished_limit: Optional[int]) -> List[Dict[str, Any]]:
+    if finished_limit is None:
+        return rows
+    kept_finished = 0
+    filtered: List[Dict[str, Any]] = []
+    for row in rows:
+        state = (row.get("state") or "").strip().upper()
+        is_finished = state in {"X", "F"}
+        if is_finished:
+            if kept_finished >= finished_limit:
+                continue
+            kept_finished += 1
+        filtered.append(row)
+    return filtered
+
 # ---------- CLI ----------
 def main():
     ap = argparse.ArgumentParser(
@@ -373,12 +395,21 @@ def main():
     ap.add_argument("--job", help="Job ID to summarize (default: $PBS_JOBID). Returns the current job statistics if valid $PBS JOBID is found and --user argument was not specified explicitly")
     ap.add_argument("--user", help="Summarize all jobs of USER (default: current user). The --user argument takes precedence over the --job value")
     ap.add_argument("--include-finished", action="store_true", help="Include finished jobs (qstat -x)")
+    ap.add_argument(
+        "--finished-limit",
+        type=non_negative_int,
+        metavar="N",
+        help="With --include-finished, show at most N finished jobs (state X/F). Active jobs are always shown.",
+    )
     ap.add_argument("--mode", choices=["bulk","compat"], default="bulk",
     help="Bulk mode: one qstat -f for all jobs; auto-fallback to compat if it fails.\n Compat mode: one qstat -fx per job (slower but widely compatible)"
     )
     ap.add_argument("--csv", metavar="PATH", help='Write CSV to PATH (use "-" for stdout)')
     ap.add_argument("--name-max", type=int, default=30, help="Max width for job name column; 0=disable truncation (default: 30)")
     args = ap.parse_args()
+
+    if args.finished_limit is not None and not args.include_finished:
+        ap.error("--finished-limit requires --include-finished")
 
     if not shutil.which("qstat"):
         print("ERROR: qstat not found in PATH.", file=sys.stderr)
@@ -409,6 +440,8 @@ def main():
                 rows = []
         if not rows and args.mode == "compat":
             rows = summarize_all_jobs_compat(user, include_finished=args.include_finished)
+
+    rows = limit_finished_rows(rows, args.finished_limit)
 
     # output
     render_table(rows, name_max=args.name_max)

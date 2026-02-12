@@ -36,7 +36,7 @@ pip install hpc-stats-scripts[gpu]
 pip install hpc-stats-scripts[all]
 ```
 
-Install directly from GitHub (the current version):
+Or install directly from GitHub (the latest version):
 ```bash
 pip install "hpc-stats-scripts @ git+https://github.com/avnikonenko/hpc-stats-scripts.git"
 pip install "hpc-stats-scripts[plot] @ git+https://github.com/avnikonenko/hpc-stats-scripts.git"
@@ -67,6 +67,9 @@ pbs-bulk-user-stats --include-finished
 
 # Summarize all jobs for a specific user
 pbs-bulk-user-stats --user myuser --include-finished
+
+# Include finished jobs but only keep 20 finished entries
+pbs-bulk-user-stats --user myuser --include-finished --finished-limit 20
 ```
 
 When invoked with no `--user` or `--job` options:
@@ -217,6 +220,9 @@ slurm-bulk-user-stats
 
 # Summarize all jobs (including finished) for a specific user
 slurm-bulk-user-stats --user myuser --include-finished
+
+# Include finished jobs but only keep 20 finished entries
+slurm-bulk-user-stats --user myuser --include-finished --finished-limit 20
 ```
 
 When invoked with no `--user` or `--job` options:

@@ -103,6 +103,12 @@ def run(cmd: List[str]) -> str:
     """Run a command and capture stderr to avoid noisy sacct warnings."""
     return subprocess.check_output(cmd, text=True, errors="ignore", stderr=subprocess.PIPE)
 
+def non_negative_int(val: str) -> int:
+    n = int(val)
+    if n < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return n
+
 
 def parse_gpus_from_tres(tres: str) -> Optional[int]:
     if not tres:
@@ -267,13 +273,39 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
         raise last_err
 
     rows = []
+    rows_by_jobid: Dict[str, Dict[str, Any]] = {}
+    step_cput_by_jobid: Dict[str, int] = {}
     for line in out.splitlines():
         line = line.strip()
         if not line:
             continue
+        parts = line.split("|")
+        if len(parts) >= len(fields_used):
+            data = {k: parts[i].strip() if i < len(parts) else "" for i, k in enumerate(fields_used)}
+            jobid_raw = data.get("JobIDRaw", "")
+            # Track step CPU time (e.g., 123.batch, 123.0) as fallback for clusters
+            # where parent job TotalCPU is missing/zero while steps carry accounting data.
+            if jobid_raw and "." in jobid_raw:
+                base_jobid = jobid_raw.split(".", 1)[0]
+                step_cput_s = parse_slurm_time_to_seconds(data.get("TotalCPU", ""))
+                if step_cput_s is not None:
+                    step_cput_by_jobid[base_jobid] = step_cput_by_jobid.get(base_jobid, 0) + step_cput_s
         r = summarize_from_sacct_line(line, fields_used)
         if r:
             rows.append(r)
+            rows_by_jobid[r["jobid"]] = r
+
+    for jobid_key, r in rows_by_jobid.items():
+        parent_cput = r.get("cput_s")
+        step_cput = step_cput_by_jobid.get(jobid_key)
+        if (parent_cput is None or parent_cput <= 0) and step_cput is not None and step_cput > 0:
+            wall_s = r.get("wall_s")
+            ncpus = r.get("ncpus")
+            avg_used_cpus = (step_cput / wall_s) if (wall_s and wall_s > 0) else None
+            cpu_eff = (avg_used_cpus / ncpus) if (avg_used_cpus is not None and ncpus) else None
+            r["cput_s"] = step_cput
+            r["avg_used_cpus"] = avg_used_cpus
+            r["cpu_eff"] = cpu_eff
     return rows
 
 
@@ -413,6 +445,34 @@ def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+ACTIVE_STATES = {
+    "PD", "PENDING",
+    "R", "RUNNING",
+    "CF", "CONFIGURING",
+    "CG", "COMPLETING",
+    "RQ", "REQUEUED",
+    "RS", "RESIZING",
+    "S", "SUSPENDED",
+    "SO", "STAGE_OUT",
+}
+
+
+def limit_finished_rows(rows: List[Dict[str, Any]], finished_limit: Optional[int]) -> List[Dict[str, Any]]:
+    if finished_limit is None:
+        return rows
+    kept_finished = 0
+    filtered: List[Dict[str, Any]] = []
+    for row in rows:
+        state = (row.get("state") or "").strip().upper()
+        is_finished = bool(state) and state not in ACTIVE_STATES
+        if is_finished:
+            if kept_finished >= finished_limit:
+                continue
+            kept_finished += 1
+        filtered.append(row)
+    return filtered
+
+
 # ---------- CLI ----------
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -432,6 +492,12 @@ def main() -> None:
         help="Include finished jobs (sacct --state=all). Without this flag only pending/running jobs are shown.",
     )
     ap.add_argument(
+        "--finished-limit",
+        type=non_negative_int,
+        metavar="N",
+        help="With --include-finished, show at most N finished jobs. Active jobs are always shown.",
+    )
+    ap.add_argument(
         "--csv",
         metavar="PATH",
         help='Write CSV to PATH (use "-" for stdout)',
@@ -443,6 +509,9 @@ def main() -> None:
         help="Max width for job name column; 0=disable truncation (default: 30)",
     )
     args = ap.parse_args()
+
+    if args.finished_limit is not None and not args.include_finished:
+        ap.error("--finished-limit requires --include-finished")
 
     if not shutil.which("sacct"):
         print("ERROR: sacct not found in PATH.", file=sys.stderr)
@@ -466,6 +535,8 @@ def main() -> None:
             )
             sys.exit(2)
         rows = list_jobs_with_sacct(user=user, include_finished=args.include_finished, jobid=None)
+
+    rows = limit_finished_rows(rows, args.finished_limit)
 
     render_table(rows, name_max=args.name_max)
     agg = aggregate(rows)
