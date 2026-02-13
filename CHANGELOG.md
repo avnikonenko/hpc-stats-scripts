@@ -1,7 +1,9 @@
 # Changelog
+## 1.3.2
+- Step-memory fallback in `slurm-bulk-user-stats` now ignores `.extern` steps and still prefers live `sstat` memory for running jobs when parent RSS is missing.
+
 ## 1.3.1
 - `slurm-bulk-user-stats` now falls back to step `MaxRSS` for memory metrics when the parent job row has empty RSS, preventing `memUsed`/`memEff` from showing `n/a` for such finished jobs.
-- Step-memory fallback in `slurm-bulk-user-stats` now ignores `.extern` steps and still prefers live `sstat` memory for running jobs when parent RSS is missing.
 
 ## 1.3.
 - Added `--finished-limit N` to `pbs-bulk-user-stats` and `slurm-bulk-user-stats`. Show only first N finished jobs.
