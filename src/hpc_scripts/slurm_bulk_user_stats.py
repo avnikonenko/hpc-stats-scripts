@@ -388,11 +388,14 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
                 step_cput_s = parse_cpu_time_from_sacct_fields(data)
                 if step_cput_s is not None:
                     step_cput_by_jobid[base_jobid] = step_cput_by_jobid.get(base_jobid, 0) + step_cput_s
-                step_mem_b = parse_size_to_bytes(data.get("MaxRSS", ""))
-                if step_mem_b is not None and step_mem_b > 0:
-                    prev_mem_b = step_mem_by_jobid.get(base_jobid, 0)
-                    if step_mem_b > prev_mem_b:
-                        step_mem_by_jobid[base_jobid] = step_mem_b
+                step_id = jobid_raw.lower().rstrip("+")
+                is_extern = step_id.endswith(".extern") or step_id.endswith(".ext")
+                if not is_extern:
+                    step_mem_b = parse_size_to_bytes(data.get("MaxRSS", ""))
+                    if step_mem_b is not None and step_mem_b > 0:
+                        prev_mem_b = step_mem_by_jobid.get(base_jobid, 0)
+                        if step_mem_b > prev_mem_b:
+                            step_mem_by_jobid[base_jobid] = step_mem_b
         r = summarize_from_sacct_line(line, fields_used)
         if r:
             rows.append(r)
@@ -421,7 +424,9 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
         state = (r.get("state") or "").upper()
         cpu_missing = r.get("cput_s") is None or r.get("cput_s", 0) <= 0
         mem_missing = r.get("used_mem_b") is None or r.get("used_mem_b", 0) <= 0
-        if state not in {"R", "RUNNING"} or (not cpu_missing and not mem_missing):
+        parent_mem_missing = parent_mem is None or parent_mem <= 0
+        need_live_mem = mem_missing or parent_mem_missing
+        if state not in {"R", "RUNNING"} or (not cpu_missing and not need_live_mem):
             continue
         if jobid_key not in sstat_cache:
             sstat_cache[jobid_key] = get_live_usage_from_sstat(jobid_key)
@@ -438,7 +443,7 @@ def list_jobs_with_sacct(user: str, include_finished: bool, jobid: Optional[str]
                 r["cpu_eff"] = cpu_eff
 
             live_mem = live.get("used_mem_b")
-            if mem_missing and live_mem is not None and live_mem > 0:
+            if need_live_mem and live_mem is not None and live_mem > 0:
                 r["used_mem_b"] = live_mem
                 req_mem_b = r.get("req_mem_b")
                 r["mem_eff"] = (live_mem / req_mem_b) if (req_mem_b and req_mem_b > 0) else None
