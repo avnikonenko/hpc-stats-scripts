@@ -248,10 +248,13 @@ def list_user_jobids(user: str, include_finished: bool=False) -> list[str]:
         line = line.strip()
         if not line or line.lower().startswith("job id") or line.startswith("-"):
             continue
-        tok = line.split()[0]
-        # Accept: 12345 | 12345.server | 12345[1] | 12345[1].server
-        if re.match(r"^\d+(?:\[[^\]]+\])?(?:\.\S+)?$", tok):
-            jobids.append(tok)
+        tok = line.split()[0].rstrip("*")  # qstat truncates long server names with '*'
+        # Strip server suffix — qstat accepts bare IDs and the suffix may be truncated
+        # for array jobs (e.g. "9298[99].pbs-s" instead of "9298[99].pbs-server")
+        bare = tok.split(".", 1)[0]
+        # Accept: 12345 | 12345[1]
+        if re.match(r"^\d+(?:\[[^\]]+\])?$", bare):
+            jobids.append(bare)
     return jobids
 
 
@@ -277,7 +280,8 @@ def summarize_jobs_with_finished_limit_fetch(user: str, mode: str, finished_limi
 
     active_keys = {jobid_key(r.get("jobid")) for r in active_rows}
     finished_rows: List[Dict[str, Any]] = []
-    for jid in list_user_jobids(user, include_finished=True):
+    all_jids = sorted(list_user_jobids(user, include_finished=True), key=jobid_key, reverse=True)
+    for jid in all_jids:
         if jobid_key(jid) in active_keys:
             continue
         try:
@@ -412,16 +416,11 @@ def aggregate(rows: List[Dict[str,Any]]) -> Dict[str, Any]:
 def limit_finished_rows(rows: List[Dict[str, Any]], finished_limit: Optional[int]) -> List[Dict[str, Any]]:
     if finished_limit is None:
         return rows
-    kept_finished = 0
-    filtered: List[Dict[str, Any]] = []
-    for row in rows:
-        is_finished = is_pbs_finished_state(row.get("state") or "")
-        if is_finished:
-            if kept_finished >= finished_limit:
-                continue
-            kept_finished += 1
-        filtered.append(row)
-    return filtered
+    active = [r for r in rows if not is_pbs_finished_state(r.get("state") or "")]
+    finished = [r for r in rows if is_pbs_finished_state(r.get("state") or "")]
+    # Sort finished by job ID descending so the most recent jobs are kept
+    finished.sort(key=lambda r: jobid_key(r.get("jobid")), reverse=True)
+    return active + finished[:finished_limit]
 
 # ---------- CLI ----------
 def main():
@@ -452,6 +451,7 @@ def main():
 
     if args.finished_limit is not None and not args.include_finished:
         ap.error("--finished-limit requires --include-finished")
+
 
     if not shutil.which("qstat"):
         print("ERROR: qstat not found in PATH.", file=sys.stderr)

@@ -633,9 +633,8 @@ def collect_finished_jobids_with_sacct(user: str, finished_limit: int, active_ke
     if proc.stdout is None:
         return []
 
-    selected: List[str] = []
+    all_finished: List[str] = []
     seen: set[str] = set()
-    terminated_early = False
     try:
         for raw in proc.stdout:
             line = raw.strip()
@@ -654,11 +653,7 @@ def collect_finished_jobids_with_sacct(user: str, finished_limit: int, active_ke
             if is_active_state(state):
                 continue
             seen.add(key)
-            selected.append(jobid_raw)
-            if len(selected) >= finished_limit:
-                terminated_early = True
-                proc.terminate()
-                break
+            all_finished.append(jobid_raw)
     finally:
         proc.stdout.close()
 
@@ -668,9 +663,12 @@ def collect_finished_jobids_with_sacct(user: str, finished_limit: int, active_ke
         proc.kill()
         proc.wait()
 
-    if not terminated_early and proc.returncode not in (0, None):
+    if proc.returncode not in (0, None):
         raise subprocess.CalledProcessError(proc.returncode or 1, cmd)
-    return selected
+
+    # Sort descending by job ID so the most recent jobs are selected
+    all_finished.sort(key=jobid_key, reverse=True)
+    return all_finished[:finished_limit]
 
 
 def list_jobs_with_finished_limit_fetch(user: str, finished_limit: int) -> List[Dict[str, Any]]:
@@ -710,17 +708,11 @@ def list_jobs_with_finished_limit_fetch(user: str, finished_limit: int) -> List[
 def limit_finished_rows(rows: List[Dict[str, Any]], finished_limit: Optional[int]) -> List[Dict[str, Any]]:
     if finished_limit is None:
         return rows
-    kept_finished = 0
-    filtered: List[Dict[str, Any]] = []
-    for row in rows:
-        state = (row.get("state") or "").strip().upper()
-        is_finished = bool(state) and not is_active_state(state)
-        if is_finished:
-            if kept_finished >= finished_limit:
-                continue
-            kept_finished += 1
-        filtered.append(row)
-    return filtered
+    active = [r for r in rows if is_active_state((r.get("state") or "").strip().upper())]
+    finished = [r for r in rows if not is_active_state((r.get("state") or "").strip().upper()) and (r.get("state") or "").strip()]
+    # Sort finished by job ID descending so the most recent jobs are kept
+    finished.sort(key=lambda r: jobid_key(r.get("jobid")), reverse=True)
+    return active + finished[:finished_limit]
 
 
 # ---------- CLI ----------
@@ -768,6 +760,7 @@ def main() -> None:
 
     if args.finished_limit is not None and not args.include_finished:
         ap.error("--finished-limit requires --include-finished")
+
 
     if not shutil.which("sacct"):
         print("ERROR: sacct not found in PATH.", file=sys.stderr)
