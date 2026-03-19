@@ -742,8 +742,8 @@ def main() -> None:
     ap.add_argument(
         "--finished-limit-strategy",
         choices=["post", "fetch"],
-        default="post",
-        help="How to apply --finished-limit: post=fetch all then trim (default), fetch=fetch active + up to N finished jobs.",
+        default="fetch",
+        help="How to apply --finished-limit: fetch=fetch active + up to N finished jobs (default), post=fetch all then trim.",
     )
     ap.add_argument(
         "--csv",

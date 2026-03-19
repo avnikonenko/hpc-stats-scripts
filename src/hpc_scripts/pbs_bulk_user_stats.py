@@ -439,8 +439,8 @@ def main():
     ap.add_argument(
         "--finished-limit-strategy",
         choices=["post", "fetch"],
-        default="post",
-        help="How to apply --finished-limit: post=fetch all then trim (default), fetch=fetch active + up to N finished jobs.",
+        default="fetch",
+        help="How to apply --finished-limit: fetch=fetch active + up to N finished jobs (default), post=fetch all then trim.",
     )
     ap.add_argument("--mode", choices=["bulk","compat"], default="bulk",
     help="Bulk mode: one qstat -f for all jobs; auto-fallback to compat if it fails.\n Compat mode: one qstat -fx per job (slower but widely compatible)"
