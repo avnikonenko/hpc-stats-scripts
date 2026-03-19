@@ -1,4 +1,9 @@
 # Changelog
+## 1.3.3
+- `--include-finished` now accepts an optional integer N to show only the N most recent finished jobs (replaces `--finished-limit N`).
+- `--finished-limit-strategy` now defaults to `fetch` (was `post`).
+- Fixed `--include-finished N` returning oldest N finished jobs instead of most recent, for both PBS and Slurm and both limit strategies.
+
 ## 1.3.2
 - Step-memory fallback in `slurm-bulk-user-stats` now ignores `.extern` steps and still prefers live `sstat` memory for running jobs when parent RSS is missing.
 
