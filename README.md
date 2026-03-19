@@ -62,17 +62,14 @@ Examples:
 # Summarize a specific job and write CSV output
 pbs-bulk-user-stats --job 12345 --csv stats.csv
 
-# Summarize all jobs for the current user (default) 
+# Summarize all jobs for the current user (default)
 pbs-bulk-user-stats --include-finished
 
 # Summarize all jobs for a specific user
 pbs-bulk-user-stats --user myuser --include-finished
 
-# Include finished jobs but only keep 20 finished entries
-pbs-bulk-user-stats --user myuser --include-finished --finished-limit 20
-
-# Faster best-effort mode: fetch active jobs + only N finished job details (use if default option takes too long)
-pbs-bulk-user-stats --user myuser --include-finished --finished-limit 20 --finished-limit-strategy fetch
+# Include finished jobs but only show the 20 most recent
+pbs-bulk-user-stats --user myuser --include-finished 20
 ```
 
 When invoked with no `--user` or `--job` options:
@@ -224,11 +221,8 @@ slurm-bulk-user-stats
 # Summarize all jobs (including finished) for a specific user
 slurm-bulk-user-stats --user myuser --include-finished
 
-# Include finished jobs but only keep 20 finished entries
-slurm-bulk-user-stats --user myuser --include-finished --finished-limit 20
-
-# Faster best-effort mode: fetch active jobs + only N finished job details
-slurm-bulk-user-stats --user myuser --include-finished --finished-limit 20 --finished-limit-strategy fetch
+# Include finished jobs but only show the 20 most recent
+slurm-bulk-user-stats --user myuser --include-finished 20
 ```
 
 When invoked with no `--user` or `--job` options:

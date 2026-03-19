@@ -429,18 +429,20 @@ def main():
     )
     ap.add_argument("--job", help="Job ID to summarize (default: $PBS_JOBID). Returns the current job statistics if valid $PBS JOBID is found and --user argument was not specified explicitly")
     ap.add_argument("--user", help="Summarize all jobs of USER (default: current user). The --user argument takes precedence over the --job value")
-    ap.add_argument("--include-finished", action="store_true", help="Include finished jobs (qstat -x)")
     ap.add_argument(
-        "--finished-limit",
+        "--include-finished",
+        nargs="?",
         type=non_negative_int,
+        default=False,
+        const=None,
         metavar="N",
-        help="With --include-finished, show at most N finished jobs (state X/F). Active jobs are always shown.",
+        help="Include finished jobs (qstat -x). Optional N limits to the N most recent finished jobs.",
     )
     ap.add_argument(
         "--finished-limit-strategy",
         choices=["post", "fetch"],
         default="fetch",
-        help="How to apply --finished-limit: fetch=fetch active + up to N finished jobs (default), post=fetch all then trim.",
+        help="How to apply the finished limit: fetch=fetch active + up to N finished jobs (default), post=fetch all then trim.",
     )
     ap.add_argument("--mode", choices=["bulk","compat"], default="bulk",
     help="Bulk mode: one qstat -f for all jobs; auto-fallback to compat if it fails.\n Compat mode: one qstat -fx per job (slower but widely compatible)"
@@ -449,9 +451,8 @@ def main():
     ap.add_argument("--name-max", type=int, default=30, help="Max width for job name column; 0=disable truncation (default: 30)")
     args = ap.parse_args()
 
-    if args.finished_limit is not None and not args.include_finished:
-        ap.error("--finished-limit requires --include-finished")
-
+    include_finished = args.include_finished is not False
+    finished_limit = args.include_finished if isinstance(args.include_finished, int) else None
 
     if not shutil.which("qstat"):
         print("ERROR: qstat not found in PATH.", file=sys.stderr)
@@ -472,29 +473,29 @@ def main():
             print("Provide --job JOBID or run inside PBS with $PBS_JOBID set, or use --user USER.", file=sys.stderr)
             sys.exit(2)
         used_fast = False
-        if args.include_finished and args.finished_limit is not None and args.finished_limit_strategy == "fetch":
+        if include_finished and finished_limit is not None and args.finished_limit_strategy == "fetch":
             try:
                 rows = summarize_jobs_with_finished_limit_fetch(
-                    user=user, mode=args.mode, finished_limit=args.finished_limit
+                    user=user, mode=args.mode, finished_limit=finished_limit
                 )
             except subprocess.CalledProcessError:
                 if args.mode == "bulk":
                     rows = summarize_all_jobs_bulk(user, include_finished=True)
                 else:
                     rows = summarize_all_jobs_compat(user, include_finished=True)
-            rows = limit_finished_rows(rows, args.finished_limit)
+            rows = limit_finished_rows(rows, finished_limit)
         else:
             if args.mode == "bulk":
                 try:
-                    rows = summarize_all_jobs_bulk(user, include_finished=args.include_finished)
+                    rows = summarize_all_jobs_bulk(user, include_finished=include_finished)
                     used_fast = True
                 except subprocess.CalledProcessError:
                     rows = []
                 except Exception:
                     rows = []
             if not rows and args.mode == "compat":
-                rows = summarize_all_jobs_compat(user, include_finished=args.include_finished)
-            rows = limit_finished_rows(rows, args.finished_limit)
+                rows = summarize_all_jobs_compat(user, include_finished=include_finished)
+            rows = limit_finished_rows(rows, finished_limit)
 
     # output
     render_table(rows, name_max=args.name_max)

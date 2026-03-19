@@ -730,20 +730,18 @@ def main() -> None:
     )
     ap.add_argument(
         "--include-finished",
-        action="store_true",
-        help="Include finished jobs (sacct --state=all). Without this flag only pending/running jobs are shown.",
-    )
-    ap.add_argument(
-        "--finished-limit",
+        nargs="?",
         type=non_negative_int,
+        default=False,
+        const=None,
         metavar="N",
-        help="With --include-finished, show at most N finished jobs. Active jobs are always shown.",
+        help="Include finished jobs (sacct). Optional N limits to the N most recent finished jobs.",
     )
     ap.add_argument(
         "--finished-limit-strategy",
         choices=["post", "fetch"],
         default="fetch",
-        help="How to apply --finished-limit: fetch=fetch active + up to N finished jobs (default), post=fetch all then trim.",
+        help="How to apply the finished limit: fetch=fetch active + up to N finished jobs (default), post=fetch all then trim.",
     )
     ap.add_argument(
         "--csv",
@@ -758,9 +756,8 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    if args.finished_limit is not None and not args.include_finished:
-        ap.error("--finished-limit requires --include-finished")
-
+    include_finished = args.include_finished is not False
+    finished_limit = args.include_finished if isinstance(args.include_finished, int) else None
 
     if not shutil.which("sacct"):
         print("ERROR: sacct not found in PATH.", file=sys.stderr)
@@ -783,15 +780,15 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(2)
-        if args.include_finished and args.finished_limit is not None and args.finished_limit_strategy == "fetch":
+        if include_finished and finished_limit is not None and args.finished_limit_strategy == "fetch":
             try:
-                rows = list_jobs_with_finished_limit_fetch(user=user, finished_limit=args.finished_limit)
+                rows = list_jobs_with_finished_limit_fetch(user=user, finished_limit=finished_limit)
             except subprocess.CalledProcessError:
                 rows = list_jobs_with_sacct(user=user, include_finished=True, jobid=None)
-            rows = limit_finished_rows(rows, args.finished_limit)
+            rows = limit_finished_rows(rows, finished_limit)
         else:
-            rows = list_jobs_with_sacct(user=user, include_finished=args.include_finished, jobid=None)
-            rows = limit_finished_rows(rows, args.finished_limit)
+            rows = list_jobs_with_sacct(user=user, include_finished=include_finished, jobid=None)
+            rows = limit_finished_rows(rows, finished_limit)
 
     render_table(rows, name_max=args.name_max)
     agg = aggregate(rows)
