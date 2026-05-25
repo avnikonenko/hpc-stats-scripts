@@ -197,6 +197,17 @@ def jobid_key(jobid: Optional[str]) -> str:
     return jobid.split(".", 1)[0]
 
 
+def jobid_sort_key(jobid: Optional[str]) -> tuple[int, int, str]:
+    bare = jobid_key(jobid)
+    if not bare:
+        return (-1, -1, "")
+    m = re.match(r"^(\d+)(?:\[(\d+)\])?$", bare)
+    if not m:
+        return (-1, -1, bare)
+    array_idx = int(m.group(2)) if m.group(2) is not None else -1
+    return (int(m.group(1)), array_idx, bare)
+
+
 # ---------- Fast bulk path ----------
 def split_qstat_f_blocks(blob: str) -> List[str]:
     """Split a single 'qstat -f ...' response into per-job blocks."""
@@ -280,7 +291,7 @@ def summarize_jobs_with_finished_limit_fetch(user: str, mode: str, finished_limi
 
     active_keys = {jobid_key(r.get("jobid")) for r in active_rows}
     finished_rows: List[Dict[str, Any]] = []
-    all_jids = sorted(list_user_jobids(user, include_finished=True), key=jobid_key, reverse=True)
+    all_jids = sorted(list_user_jobids(user, include_finished=True), key=jobid_sort_key, reverse=True)
     for jid in all_jids:
         if jobid_key(jid) in active_keys:
             continue
@@ -419,7 +430,7 @@ def limit_finished_rows(rows: List[Dict[str, Any]], finished_limit: Optional[int
     active = [r for r in rows if not is_pbs_finished_state(r.get("state") or "")]
     finished = [r for r in rows if is_pbs_finished_state(r.get("state") or "")]
     # Sort finished by job ID descending so the most recent jobs are kept
-    finished.sort(key=lambda r: jobid_key(r.get("jobid")), reverse=True)
+    finished.sort(key=lambda r: jobid_sort_key(r.get("jobid")), reverse=True)
     return active + finished[:finished_limit]
 
 # ---------- CLI ----------

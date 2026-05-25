@@ -275,6 +275,17 @@ def jobid_key(jobid: Optional[str]) -> str:
     return jobid.split(".", 1)[0]
 
 
+def jobid_sort_key(jobid: Optional[str]) -> tuple[int, int, str]:
+    bare = jobid_key(jobid)
+    if not bare:
+        return (-1, -1, "")
+    m = re.match(r"^(\d+)(?:_(\d+))?$", bare)
+    if not m:
+        return (-1, -1, bare)
+    array_idx = int(m.group(2)) if m.group(2) is not None else -1
+    return (int(m.group(1)), array_idx, bare)
+
+
 def summarize_from_sacct_line(line: str, fields: List[str]) -> Optional[Dict[str, Any]]:
     parts = line.split("|")
     if len(parts) < len(fields):
@@ -667,7 +678,7 @@ def collect_finished_jobids_with_sacct(user: str, finished_limit: int, active_ke
         raise subprocess.CalledProcessError(proc.returncode or 1, cmd)
 
     # Sort descending by job ID so the most recent jobs are selected
-    all_finished.sort(key=jobid_key, reverse=True)
+    all_finished.sort(key=jobid_sort_key, reverse=True)
     return all_finished[:finished_limit]
 
 
@@ -711,7 +722,7 @@ def limit_finished_rows(rows: List[Dict[str, Any]], finished_limit: Optional[int
     active = [r for r in rows if is_active_state((r.get("state") or "").strip().upper())]
     finished = [r for r in rows if not is_active_state((r.get("state") or "").strip().upper()) and (r.get("state") or "").strip()]
     # Sort finished by job ID descending so the most recent jobs are kept
-    finished.sort(key=lambda r: jobid_key(r.get("jobid")), reverse=True)
+    finished.sort(key=lambda r: jobid_sort_key(r.get("jobid")), reverse=True)
     return active + finished[:finished_limit]
 
 
