@@ -732,14 +732,17 @@ def main() -> None:
         description="Slurm job CPU and memory statistics (single job or all jobs for a user)."
     )
     ap.add_argument(
+        "-j",
         "--job",
         help="Job ID to summarize (default: $SLURM_JOB_ID). Returns the current job statistics if valid $SLURM_JOB_ID is found and --user is not set.",
     )
     ap.add_argument(
+        "-u",
         "--user",
         help="Summarize all jobs of USER (default: current user). The --user argument takes precedence over --job.",
     )
     ap.add_argument(
+        "-f",
         "--include-finished",
         nargs="?",
         type=non_negative_int,

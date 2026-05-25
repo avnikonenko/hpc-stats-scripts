@@ -438,9 +438,10 @@ def main():
     ap = argparse.ArgumentParser(
         description="PBS job CPU & Memory statistics (single job or all jobs for a user)."
     )
-    ap.add_argument("--job", help="Job ID to summarize (default: $PBS_JOBID). Returns the current job statistics if valid $PBS JOBID is found and --user argument was not specified explicitly")
-    ap.add_argument("--user", help="Summarize all jobs of USER (default: current user). The --user argument takes precedence over the --job value")
+    ap.add_argument("-j", "--job", help="Job ID to summarize (default: $PBS_JOBID). Returns the current job statistics if valid $PBS JOBID is found and --user argument was not specified explicitly")
+    ap.add_argument("-u", "--user", help="Summarize all jobs of USER (default: current user). The --user argument takes precedence over the --job value")
     ap.add_argument(
+        "-f",
         "--include-finished",
         nargs="?",
         type=non_negative_int,
