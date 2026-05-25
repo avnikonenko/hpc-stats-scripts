@@ -220,6 +220,22 @@ def split_qstat_f_blocks(blob: str) -> List[str]:
     return blocks
 
 
+def summarize_jobs(jobids: List[str]) -> List[Dict[str, Any]]:
+    if len(jobids) == 1:
+        return [summarize_job(jobids[0])]
+
+    try:
+        blob = run(["qstat", "-fx", *jobids])
+        blocks = split_qstat_f_blocks(blob)
+        rows = [summarize_job_from_block(block) for block in blocks]
+        if rows:
+            return rows
+    except subprocess.CalledProcessError:
+        pass
+
+    return [summarize_job(jobid) for jobid in jobids]
+
+
 def summarize_all_jobs_bulk(user: str, include_finished: bool) -> list[dict]:
     # Try with -u first; if server disallows, fall back to all and filter by owner.
     variants = [
@@ -438,7 +454,13 @@ def main():
     ap = argparse.ArgumentParser(
         description="PBS job CPU & Memory statistics (single job or all jobs for a user)."
     )
-    ap.add_argument("-j", "--job", help="Job ID to summarize (default: $PBS_JOBID). Returns the current job statistics if valid $PBS JOBID is found and --user argument was not specified explicitly")
+    ap.add_argument(
+        "-j",
+        "--job",
+        nargs="+",
+        metavar="JOBID",
+        help="Job ID(s) to summarize (default: $PBS_JOBID). Returns job statistics if valid $PBS_JOBID is found and --user argument was not specified explicitly",
+    )
     ap.add_argument("-u", "--user", help="Summarize all jobs of USER (default: current user). The --user argument takes precedence over the --job value")
     ap.add_argument(
         "-f",
@@ -472,17 +494,18 @@ def main():
 
     rows: List[Dict[str,Any]] = []
 
-    jobid = args.job or os.environ.get("PBS_JOBID")
+    env_jobid = os.environ.get("PBS_JOBID")
+    jobids = args.job or ([env_jobid] if env_jobid else [])
     default_user = os.environ.get("PBS_O_LOGNAME") or os.environ.get("USER") or getpass.getuser()
 
-    # single-job path
-    if args.user is None and jobid:
-        rows.append(summarize_job(jobid))
+    # explicit-job path
+    if args.user is None and jobids:
+        rows = summarize_jobs(jobids)
     else:
         # multi-job path
         user = args.user or default_user
         if not user:
-            print("Provide --job JOBID or run inside PBS with $PBS_JOBID set, or use --user USER.", file=sys.stderr)
+            print("Provide --job JOBID [JOBID ...] or run inside PBS with $PBS_JOBID set, or use --user USER.", file=sys.stderr)
             sys.exit(2)
         used_fast = False
         if include_finished and finished_limit is not None and args.finished_limit_strategy == "fetch":

@@ -734,7 +734,9 @@ def main() -> None:
     ap.add_argument(
         "-j",
         "--job",
-        help="Job ID to summarize (default: $SLURM_JOB_ID). Returns the current job statistics if valid $SLURM_JOB_ID is found and --user is not set.",
+        nargs="+",
+        metavar="JOBID",
+        help="Job ID(s) to summarize (default: $SLURM_JOB_ID). Returns job statistics if valid $SLURM_JOB_ID is found and --user is not set.",
     )
     ap.add_argument(
         "-u",
@@ -779,18 +781,19 @@ def main() -> None:
 
     rows: List[Dict[str, Any]] = []
 
-    jobid = args.job or os.environ.get("SLURM_JOB_ID") or os.environ.get("SLURM_JOBID")
+    env_jobid = os.environ.get("SLURM_JOB_ID") or os.environ.get("SLURM_JOBID")
+    jobids = args.job or ([env_jobid] if env_jobid else [])
     default_user = (
         os.environ.get("SLURM_JOB_USER") or os.environ.get("USER") or getpass.getuser()
     )
 
-    if args.user is None and jobid:
-        rows = list_jobs_with_sacct(user="", include_finished=True, jobid=jobid)
+    if args.user is None and jobids:
+        rows = list_jobs_with_sacct(user="", include_finished=True, jobid=",".join(jobids))
     else:
         user = args.user or default_user
         if not user:
             print(
-                "Provide --job JOBID or run inside Slurm with $SLURM_JOB_ID set, or use --user USER.",
+                "Provide --job JOBID [JOBID ...] or run inside Slurm with $SLURM_JOB_ID set, or use --user USER.",
                 file=sys.stderr,
             )
             sys.exit(2)

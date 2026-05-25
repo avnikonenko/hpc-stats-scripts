@@ -62,6 +62,9 @@ Examples:
 # Summarize a specific job and write CSV output
 pbs-bulk-user-stats --job 12345 --csv stats.csv
 
+# Summarize multiple specific jobs
+pbs-bulk-user-stats --job 12345 12346
+
 # Summarize all jobs for the current user (default)
 pbs-bulk-user-stats --include-finished
 
@@ -214,6 +217,9 @@ Examples:
 ```bash
 # Summarize a specific job and write CSV output
 slurm-bulk-user-stats --job 12345 --csv stats.csv
+
+# Summarize multiple specific jobs
+slurm-bulk-user-stats --job 12345 12346
 
 # Summarize all running jobs for the current user (default)
 slurm-bulk-user-stats
