@@ -25,7 +25,10 @@ RE_OWNER   = re.compile(r"^\s*Job_Owner\s*=\s*([^@]+)@", re.M)
 RE_STATE   = re.compile(r"^\s*job_state\s*=\s*(\S+)", re.M)
 RE_NAME    = re.compile(r"^\s*Job_Name\s*=\s*(\S+)", re.M)
 RE_JOBID   = re.compile(r"^\s*Job Id:\s*(\S+)", re.M)
-RE_EXECHOST = re.compile(r"^\s*exec_host\s*=\s*(\S.*(?:\n\s+\S.*)*)", re.M)
+RE_EXECHOST = re.compile(
+    r"^\s*exec_host\s*=\s*(\S.*(?:\n(?!\s*[A-Za-z_][\w.]*\s*=)\s+\S.*)*)",
+    re.M,
+)
 
 # ---------- Utilities ----------
 def hms_to_seconds(hms: str) -> int:
